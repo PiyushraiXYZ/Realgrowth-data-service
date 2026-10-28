@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     port: int = 8000
     apollo_api_key: str
+    clay_api_key: str
 
     google_maps_api_key: str
 
