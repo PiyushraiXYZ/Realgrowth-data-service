@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     port: int = 8000
     apollo_api_key: str
+    clay_api_key: str
 
     model_config = SettingsConfigDict(
         env_file=".env",
