@@ -141,3 +141,213 @@ def apollo_to_prospect(person: dict) -> dict:
     prospect["country"] = location.get("country")
 
     return prospect
+
+
+# For the Clay 
+
+def clay_to_prospect(person: dict) -> dict | None:
+    """
+    Convert a Clay people-search result into the
+    common RealGrowth prospect structure.
+    """
+
+    if not person:
+        return None
+
+    name = person.get("name")
+
+    if not name:
+        name = " ".join(
+            filter(
+                None,
+                [
+                    person.get("first_name"),
+                    person.get("last_name"),
+                ],
+            )
+        ).strip()
+
+    if not name:
+        return None
+
+    linkedin_url = (
+        person.get("url")
+        or person.get("linkedin_url")
+        or person.get("linkedinUrl")
+        or person.get("linkedin")
+    )
+
+    company = (
+        person.get("latest_experience_company")
+        or person.get("company")
+        or person.get("company_name")
+    )
+
+    title = (
+        person.get("latest_experience_title")
+        or person.get("title")
+        or person.get("job_title")
+        or person.get("jobTitle")
+    )
+
+    domain = person.get("domain")
+
+    website = None
+
+    if domain:
+        domain = domain.strip()
+
+        if domain.startswith("http://") or domain.startswith("https://"):
+            website = domain
+        else:
+            website = f"https://{domain}"
+
+    website = (
+        person.get("website")
+        or person.get("company_website")
+        or website
+    )
+
+    location = person.get("structured_location") or {}
+
+    if not isinstance(location, dict):
+        location = {}
+
+    city = location.get("city")
+    state = location.get("state")
+    country = location.get("country")
+
+    provider_id = (
+        person.get("id")
+        or person.get("person_id")
+        or person.get("personId")
+    )
+
+    if not provider_id and linkedin_url:
+        provider_id = linkedin_url
+
+    if not provider_id and name:
+        provider_id = name.lower().strip()
+
+    email = (
+        person.get("email")
+        or person.get("work_email")
+        or person.get("business_email")
+    )
+
+    return {
+        "provider": "clay",
+        "providerId": str(provider_id),
+
+        "name": name,
+        "title": title,
+
+        "email": email,
+        "linkedinUrl": linkedin_url,
+
+        "company": company,
+        "website": website,
+
+        "city": city,
+        "state": state,
+        "country": country,
+
+        "source": "clay",
+        "sourceEngine": "clay",
+
+        "relationshipStage": "new",
+        "relationshipScore": 0,
+        "trustLevel": "unknown",
+        "engagementScore": 0,
+
+        "pipelineStage": "new",
+        "stage": "new",
+
+        "processing": False,
+        "archived": False,
+        "active": True,
+
+        "discoveredFromFeed": False,
+        "feedPostsCount": 0,
+    }
+
+# for the Google Maps
+
+def google_maps_to_prospect(place: dict) -> dict | None:
+    """
+    Convert a Google Maps / Google Places result
+    into the common RealGrowth prospect structure.
+    """
+
+    if not place:
+        return None
+
+    display_name = place.get("displayName") or {}
+
+    if isinstance(display_name, dict):
+        name = display_name.get("text") or ""
+    else:
+        name = str(display_name)
+
+    if not name:
+        return None
+
+    location = place.get("location") or {}
+
+    formatted_address = place.get("formattedAddress") or ""
+
+    website = place.get("websiteUri") or ""
+
+
+    industry = (
+        place.get("primaryType")
+        or ""
+    )
+
+    provider_id = place.get("id")
+
+    if not provider_id:
+        return None
+
+    phone = (
+        place.get("internationalPhoneNumber")
+        or place.get("nationalPhoneNumber")
+    )
+
+    google_maps_url = place.get("googleMapsUri") or ""
+
+    rating = place.get("rating")
+
+    user_rating_count = place.get(
+        "userRatingCount"
+    )
+
+    prospect = build_base_prospect(
+        name=name,
+        title="",
+        location=formatted_address,
+        company=name,
+        website=website,
+        industry=industry,
+        source="GOOGLE_MAPS",
+        source_engine="GOOGLE_MAPS",
+        search_url=google_maps_url,
+    )
+
+    prospect["provider"] = "google_maps"
+    prospect["providerId"] = str(provider_id)
+
+    prospect["phone"] = phone
+
+    prospect["googleMapsUrl"] = google_maps_url
+    prospect["googleMapsRating"] = rating
+    prospect["googleMapsUserRatingCount"] = user_rating_count
+
+    prospect["googlePlaceTypes"] = (
+        place.get("types") or []
+    )
+
+    prospect["latitude"] = location.get("latitude")
+    prospect["longitude"] = location.get("longitude")
+
+    return prospect    

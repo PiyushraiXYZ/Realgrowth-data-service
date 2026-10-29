@@ -32,14 +32,21 @@ async def search_companies(
          )
 
 
-
         return {
-            "provider": "google_maps",
-            "page": response["page"],
-            "per_page": response["per_page"],
-            "total": len(companies),
-            "companies": companies,
-        }
+       "provider": "google_maps",
+      "page": response["page"],
+       "per_page": response["per_page"],
+       "total": response["total"],
+       "created": response["created"],
+       "updated": response["updated"],
+       "skipped": response["skipped"],
+       "saved": response["saved"],
+        "companies": companies,
+       }
+
+
+
+
 
     except ValueError as exc:
         raise HTTPException(
