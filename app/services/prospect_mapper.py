@@ -141,3 +141,178 @@ def apollo_to_prospect(person: dict) -> dict:
     prospect["country"] = location.get("country")
 
     return prospect
+
+
+# For the Clay 
+
+def clay_to_prospect(person: dict) -> dict | None:
+    """
+    Convert a Clay people-search result into the
+    common RealGrowth prospect structure.
+    """
+
+    if not person:
+        return None
+
+    # -----------------------------------------
+    # Basic person information
+    # -----------------------------------------
+
+    name = person.get("name")
+
+    if not name:
+        name = " ".join(
+            filter(
+                None,
+                [
+                    person.get("first_name"),
+                    person.get("last_name"),
+                ],
+            )
+        ).strip()
+
+    if not name:
+        return None
+
+    # -----------------------------------------
+    # LinkedIn
+    # -----------------------------------------
+
+    linkedin_url = (
+        person.get("url")
+        or person.get("linkedin_url")
+        or person.get("linkedinUrl")
+        or person.get("linkedin")
+    )
+
+    # -----------------------------------------
+    # Company
+    # -----------------------------------------
+
+    company = (
+        person.get("latest_experience_company")
+        or person.get("company")
+        or person.get("company_name")
+    )
+
+    # -----------------------------------------
+    # Job title
+    # -----------------------------------------
+
+    title = (
+        person.get("latest_experience_title")
+        or person.get("title")
+        or person.get("job_title")
+        or person.get("jobTitle")
+    )
+
+    # -----------------------------------------
+    # Company website
+    # -----------------------------------------
+
+    domain = person.get("domain")
+
+    website = None
+
+    if domain:
+        domain = domain.strip()
+
+        if domain.startswith("http://") or domain.startswith("https://"):
+            website = domain
+        else:
+            website = f"https://{domain}"
+
+    website = (
+        person.get("website")
+        or person.get("company_website")
+        or website
+    )
+
+    # -----------------------------------------
+    # Location
+    # -----------------------------------------
+
+    location = person.get("structured_location") or {}
+
+    if not isinstance(location, dict):
+        location = {}
+
+    city = location.get("city")
+    state = location.get("state")
+    country = location.get("country")
+
+    # -----------------------------------------
+    # Provider ID
+    #
+    # Clay search response does not currently
+    # provide a person ID.
+    #
+    # LinkedIn URL is therefore used as the
+    # stable provider identifier when available.
+    # -----------------------------------------
+
+    provider_id = (
+        person.get("id")
+        or person.get("person_id")
+        or person.get("personId")
+    )
+
+    if not provider_id and linkedin_url:
+        provider_id = linkedin_url
+
+    if not provider_id and name:
+        provider_id = name.lower().strip()
+
+    # -----------------------------------------
+    # Email
+    #
+    # Clay search response currently doesn't
+    # contain email in the sample response.
+    # Keep it None until enrichment provides it.
+    # -----------------------------------------
+
+    email = (
+        person.get("email")
+        or person.get("work_email")
+        or person.get("business_email")
+    )
+
+    # -----------------------------------------
+    # Final RealGrowth prospect
+    # -----------------------------------------
+
+    return {
+        "provider": "clay",
+        "providerId": str(provider_id),
+
+        "name": name,
+        "title": title,
+
+        "email": email,
+        "linkedinUrl": linkedin_url,
+
+        "company": company,
+        "website": website,
+
+        "city": city,
+        "state": state,
+        "country": country,
+
+        "source": "clay",
+        "sourceEngine": "clay",
+
+        "relationshipStage": "new",
+        "relationshipScore": 0,
+        "trustLevel": "unknown",
+        "engagementScore": 0,
+
+        "pipelineStage": "new",
+        "stage": "new",
+
+        "processing": False,
+        "archived": False,
+        "active": True,
+
+        "discoveredFromFeed": False,
+        "feedPostsCount": 0,
+    }

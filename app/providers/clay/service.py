@@ -1,9 +1,12 @@
 from app.providers.clay.client import ClayClient
+from app.repositories.prospect_repository import ProspectRepository
+from app.services.prospect_mapper import clay_to_prospect
 
 
 class ClayService:
     def __init__(self):
         self.client = ClayClient()
+        self.repository = ProspectRepository()
 
     async def get_search_fields(self) -> dict:
         """
@@ -57,28 +60,11 @@ class ClayService:
         per_page: int = 10,
     ) -> dict:
         """
-        Search people using Clay.
-
-        RealGrowth -> Clay mapping:
-
-        target
-            -> company_description_keywords
-
-        country
-            -> location_countries_include
-
-        decision_maker
-            -> job_title_keywords
-
-        industry
-            -> company_industries_include
-
-        seniority
-            -> job_title_seniority_levels_v2
+        Search people using Clay and save the results
+        into the RealGrowth prospects collection.
         """
 
         filters: dict = {}
-
 
         if target:
             filters["company_description_keywords"] = [
@@ -90,31 +76,27 @@ class ClayService:
                 country.strip()
             ]
 
-
         if decision_maker:
             filters["job_title_keywords"] = [
                 decision_maker.strip()
             ]
-
 
         if industry:
             filters["company_industries_include"] = [
                 industry.strip()
             ]
 
-
         if seniority:
             filters["job_title_seniority_levels_v2"] = [
                 self._map_seniority(seniority)
             ]
-
 
         search_payload = {
             "source_type": "people",
             "filters": filters,
         }
 
-
+        # Step 1: Create Clay search
         search_response = await self.client.create_people_search(
             search_payload
         )
@@ -130,7 +112,7 @@ class ClayService:
                 f"{search_response}"
             )
 
-
+        # Step 2: Run Clay search
         run_payload = {
             "page": page,
             "per_page": per_page,
@@ -141,7 +123,7 @@ class ClayService:
             payload=run_payload,
         )
 
-
+        # Step 3: Extract people
         people = response.get(
             "people",
             response.get(
@@ -156,7 +138,7 @@ class ClayService:
         if people is None:
             people = []
 
-
+        # Step 4: Total
         total = response.get(
             "total",
             response.get(
@@ -168,15 +150,69 @@ class ClayService:
             ),
         )
 
+        # Step 5: Save Clay people into MongoDB
+        created = 0
+        updated = 0
+        skipped = 0
+        saved = []
+
+        for person in people:
+
+            try:
+                prospect = clay_to_prospect(person)
+
+                if not prospect:
+                    skipped += 1
+                    continue
+
+                result = await self.repository.upsert_prospect(
+                    prospect
+                )
+
+                action = result.get("action")
+
+                if action == "created":
+                    created += 1
+                elif action == "updated":
+                    updated += 1
+                else:
+                    skipped += 1
+
+                saved.append({
+                    "provider_id": prospect.get("providerId"),
+                    "name": prospect.get("name"),
+                    "company": prospect.get("company"),
+                    "action": action,
+                    "prospect_id": result.get("prospect_id"),
+                })
+
+            except Exception as exc:
+                skipped += 1
+
+                saved.append({
+                    "provider_id": person.get("id"),
+                    "name": person.get("name"),
+                    "action": "skipped",
+                    "error": str(exc),
+                })
 
         return {
             "provider": "clay",
             "search_id": search_id,
             "total": total,
+
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+
+            "saved": saved,
+
             "people": people,
+
             "pagination": {
                 "page": page,
                 "per_page": per_page,
             },
+
             "filters": filters,
         }
