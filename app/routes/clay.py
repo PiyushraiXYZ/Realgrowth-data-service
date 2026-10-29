@@ -47,6 +47,7 @@ async def search_people(
             decision_maker=request.decision_maker,
             industry=request.industry,
             seniority=request.seniority,
+            filters=request.filters,
             page=request.page,
             per_page=request.per_page,
         )

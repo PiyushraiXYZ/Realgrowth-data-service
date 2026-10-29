@@ -3,6 +3,7 @@ import logging
 from app.providers.google_maps.client import GoogleMapsClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import google_maps_to_prospect
+from app.services.prospect_scoring import ProspectScoringService
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class GoogleMapsService:
     def __init__(self):
         self.client = GoogleMapsClient()
         self.repository = ProspectRepository()
+        self.scoring = ProspectScoringService()
 
     async def search_companies(
         self,
@@ -88,10 +90,18 @@ class GoogleMapsService:
 
             saved.append({
                 "name": prospect.get("name"),
+                "title": prospect.get("title"),
+                "company": prospect.get("company"),
+                "website": prospect.get("website"),
+                "industry": prospect.get("industry"),
+                "location": prospect.get("location"),
+                "phone": prospect.get("phone"),
                 "provider_id": prospect.get("providerId"),
                 "action": action,
-                "prospect_id": result.get("id"),  # IMPORTANT
+                "prospect_id": result.get("id"),
             })
+
+        await self.scoring.score_saved_prospects("google_maps", saved)
 
         return {
             "provider": "google_maps",

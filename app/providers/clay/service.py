@@ -1,12 +1,14 @@
 from app.providers.clay.client import ClayClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import clay_to_prospect
+from app.services.prospect_scoring import ProspectScoringService
 
 
 class ClayService:
     def __init__(self):
         self.client = ClayClient()
         self.repository = ProspectRepository()
+        self.scoring = ProspectScoringService()
 
     async def get_search_fields(self) -> dict:
         """
@@ -56,6 +58,7 @@ class ClayService:
         decision_maker: str | None = None,
         industry: str | None = None,
         seniority: str | None = None,
+        filters: dict | None = None,
         page: int = 1,
         per_page: int = 10,
     ) -> dict:
@@ -64,7 +67,7 @@ class ClayService:
         into the RealGrowth prospects collection.
         """
 
-        filters: dict = {}
+        filters = dict(filters or {})
 
         if target:
             filters["company_description_keywords"] = [
@@ -181,9 +184,13 @@ class ClayService:
                 saved.append({
                     "provider_id": prospect.get("providerId"),
                     "name": prospect.get("name"),
+                    "title": prospect.get("title"),
                     "company": prospect.get("company"),
+                    "website": prospect.get("website"),
+                    "industry": prospect.get("industry"),
+                    "location": prospect.get("location"),
                     "action": action,
-                    "prospect_id": result.get("prospect_id"),
+                    "prospect_id": result.get("id"),
                 })
 
             except Exception as exc:
@@ -195,6 +202,8 @@ class ClayService:
                     "action": "skipped",
                     "error": str(exc),
                 })
+
+        await self.scoring.score_saved_prospects("clay", saved)
 
         return {
             "provider": "clay",

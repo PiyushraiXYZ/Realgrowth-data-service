@@ -3,6 +3,7 @@ import logging
 from app.providers.apollo.client import ApolloClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import apollo_to_prospect
+from app.services.prospect_scoring import ProspectScoringService
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ class ApolloService:
     def __init__(self):
         self.client = ApolloClient()
         self.repository = ProspectRepository()
+        self.scoring = ProspectScoringService()
 
     async def search_people(self, payload: dict) -> dict:
         response = await self.client.search_people(payload)
@@ -505,6 +507,8 @@ class ApolloService:
                 action,
                 result.get("id"),
             )
+
+        await self.scoring.score_saved_prospects("apollo", saved)
 
         return {
             "created": created,

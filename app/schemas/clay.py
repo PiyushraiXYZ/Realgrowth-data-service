@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,9 @@ ClaySeniority = Literal[
 
 
 class ClayPeopleSearchRequest(BaseModel):
+    source_type: Literal["people"] = "people"
+    filters: dict[str, Any] = Field(default_factory=dict)
+
     target: str | None = Field(
         default=None,
         description=(
