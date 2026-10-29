@@ -27,61 +27,197 @@ class ApolloService:
             },
         }
 
+    # =========================================================
+    # ENRICH PEOPLE
+    # =========================================================
+
     async def enrich_people(
         self,
         person_ids: list[str],
         reveal_personal_emails: bool = False,
         reveal_phone_number: bool = False,
     ) -> dict:
+
+        if not person_ids:
+            raise ValueError(
+                "At least one Apollo person ID is required."
+            )
+
+        if len(person_ids) > 10:
+            raise ValueError(
+                "Apollo allows a maximum of 10 people per bulk enrichment request."
+            )
+
+        logger.info(
+            "Starting Apollo enrichment | person_count=%s",
+            len(person_ids),
+        )
+
+        # -----------------------------------------------------
         # 1. Get enriched data from Apollo
+        # -----------------------------------------------------
+
         response = await self.client.bulk_enrich_people(
             person_ids=person_ids,
             reveal_personal_emails=reveal_personal_emails,
             reveal_phone_number=reveal_phone_number,
         )
 
+        logger.info(
+            "Apollo enrichment response | requested=%s | enriched=%s | missing=%s",
+            response.get(
+                "total_requested_enrichments",
+                0,
+            ),
+            response.get(
+                "unique_enriched_records",
+                0,
+            ),
+            response.get(
+                "missing_records",
+                0,
+            ),
+        )
+
+        # -----------------------------------------------------
         # 2. Normalize Apollo response
-        enriched_result = self.normalize_enriched_people(response)
+        # -----------------------------------------------------
 
+        enriched_result = self.normalize_enriched_people(
+            response
+        )
+
+        prospects = enriched_result.get(
+            "prospects",
+            [],
+        )
+
+        logger.info(
+            "Apollo normalization completed | valid_prospects=%s",
+            len(prospects),
+        )
+
+        # -----------------------------------------------------
         # 3. Save normalized data into MongoDB
-        save_result = await self.save_enriched_people(enriched_result)
+        # -----------------------------------------------------
 
-        # 4. Return enrichment + DB result
+        save_result = await self.save_enriched_people(
+            enriched_result
+        )
+
+        logger.info(
+            "Apollo MongoDB save completed | created=%s | updated=%s | skipped=%s",
+            save_result.get("created", 0),
+            save_result.get("updated", 0),
+            save_result.get("skipped", 0),
+        )
+
+        # -----------------------------------------------------
+        # 4. Return final response
+        # -----------------------------------------------------
+
         return {
             "provider": "apollo",
-            "total_requested": enriched_result.get("total_requested", 0),
-            "unique_enriched": enriched_result.get("unique_enriched", 0),
-            "missing_records": enriched_result.get("missing_records", 0),
-            "created": save_result.get("created", 0),
-            "updated": save_result.get("updated", 0),
-            "skipped": save_result.get("skipped", 0),
-            "saved": save_result.get("saved", []),
+
+            "total_requested": enriched_result.get(
+                "total_requested",
+                0,
+            ),
+
+            "unique_enriched": enriched_result.get(
+                "unique_enriched",
+                0,
+            ),
+
+            "missing_records": enriched_result.get(
+                "missing_records",
+                0,
+            ),
+
+            "created": save_result.get(
+                "created",
+                0,
+            ),
+
+            "updated": save_result.get(
+                "updated",
+                0,
+            ),
+
+            "skipped": save_result.get(
+                "skipped",
+                0,
+            ),
+
+            "saved": save_result.get(
+                "saved",
+                [],
+            ),
         }
 
+    # =========================================================
+    # NORMALIZE APOLLO RESPONSE
+    # =========================================================
 
     def normalize_enriched_people(
         self,
         response: dict,
     ) -> dict:
 
-        matches = response.get("matches", [])
+        matches = response.get("matches") or []
 
         prospects = []
 
         for person in matches:
 
-            organization = person.get("organization") or {}
+            # Apollo can return null for unmatched records.
+            if not person:
+                logger.warning(
+                    "Apollo returned an unmatched/null person."
+                )
+                continue
+
+            apollo_id = person.get("id")
+
+            if not apollo_id:
+                logger.warning(
+                    "Skipping Apollo person without ID."
+                )
+                continue
+
+            organization = (
+                person.get("organization")
+                or {}
+            )
 
             prospects.append(
                 {
-                    "apollo_id": person.get("id"),
+                    # -----------------------------------------
+                    # Person
+                    # -----------------------------------------
 
-                    "first_name": person.get("first_name"),
-                    "last_name": person.get("last_name"),
-                    "name": person.get("name"),
-                    "job_title": person.get("title"),
+                    "apollo_id": apollo_id,
 
-                    "email": person.get("email"),
+                    "first_name": person.get(
+                        "first_name"
+                    ),
+
+                    "last_name": person.get(
+                        "last_name"
+                    ),
+
+                    "name": person.get(
+                        "name"
+                    ),
+
+                    "job_title": person.get(
+                        "title"
+                    ),
+
+                    "email": person.get(
+                        "email"
+                    ),
+
                     "email_status": person.get(
                         "email_status"
                     ),
@@ -90,45 +226,73 @@ class ApolloService:
                         "linkedin_url"
                     ),
 
-                    # IMPORTANT:
-                    # phone is from person, not organization
-                    "phone": person.get("phone"),
+                    "phone": person.get(
+                        "phone"
+                    ),
+
+                    # -----------------------------------------
+                    # Company
+                    # -----------------------------------------
 
                     "company": {
                         "id": person.get(
                             "organization_id"
                         ),
+
                         "name": organization.get(
                             "name"
                         ),
+
                         "website": organization.get(
                             "primary_domain"
                         ),
+
                         "linkedin_url": organization.get(
                             "linkedin_url"
                         ),
+
                         "industry": organization.get(
                             "industry"
                         ),
+
                         "employee_count": organization.get(
                             "estimated_num_employees"
                         ),
+
                         "city": organization.get(
                             "city"
                         ),
+
                         "state": organization.get(
                             "state"
                         ),
+
                         "country": organization.get(
                             "country"
                         ),
                     },
 
+                    # -----------------------------------------
+                    # Location
+                    # -----------------------------------------
+
                     "location": {
-                        "city": person.get("city"),
-                        "state": person.get("state"),
-                        "country": person.get("country"),
+                        "city": person.get(
+                            "city"
+                        ),
+
+                        "state": person.get(
+                            "state"
+                        ),
+
+                        "country": person.get(
+                            "country"
+                        ),
                     },
+
+                    # -----------------------------------------
+                    # Job information
+                    # -----------------------------------------
 
                     "seniority": person.get(
                         "seniority"
@@ -136,13 +300,17 @@ class ApolloService:
 
                     "departments": person.get(
                         "departments",
-                        []
+                        [],
                     ),
 
                     "functions": person.get(
                         "functions",
-                        []
+                        [],
                     ),
+
+                    # -----------------------------------------
+                    # Apollo metadata
+                    # -----------------------------------------
 
                     "match_confidence": person.get(
                         "match_confidence"
@@ -156,29 +324,37 @@ class ApolloService:
 
         return {
             "provider": "apollo",
+
             "total_requested": response.get(
                 "total_requested_enrichments",
                 0,
             ),
+
             "unique_enriched": response.get(
                 "unique_enriched_records",
                 0,
             ),
+
             "missing_records": response.get(
                 "missing_records",
                 0,
             ),
+
             "prospects": prospects,
         }
+
+    # =========================================================
+    # SAVE ENRICHED PEOPLE
+    # =========================================================
 
     async def save_enriched_people(
         self,
         enriched_result: dict,
     ) -> dict:
 
-        prospects = enriched_result.get(
-            "prospects",
-            []
+        prospects = (
+            enriched_result.get("prospects")
+            or []
         )
 
         created = 0
@@ -189,120 +365,150 @@ class ApolloService:
 
         for person in prospects:
 
-            apollo_id = person.get("apollo_id")
+            apollo_id = person.get(
+                "apollo_id"
+            )
+
+            # ---------------------------------------------
+            # Validate Apollo ID
+            # ---------------------------------------------
 
             if not apollo_id:
+
                 skipped += 1
 
                 logger.warning(
-                    "Skipping Apollo person without ID"
+                    "Skipping Apollo person without ID."
                 )
 
                 continue
 
-            # Convert normalized Apollo data
-            # into RealGrowth prospect schema.
-            prospect = apollo_to_prospect(person)
+            # ---------------------------------------------
+            # Convert Apollo data into RealGrowth schema
+            # ---------------------------------------------
 
-            # Insert or update MongoDB.
+            prospect = apollo_to_prospect(
+                person
+            )
+
+            logger.info(
+                "Saving Apollo prospect | provider=%s | providerId=%s | name=%s",
+                prospect.get("provider"),
+                prospect.get("providerId"),
+                prospect.get("name"),
+            )
+
+            # ---------------------------------------------
+            # Save / update MongoDB
+            # ---------------------------------------------
+
             result = await self.repository.upsert_prospect(
                 prospect
             )
 
-            if result["action"] == "created":
+            action = result.get(
+                "action"
+            )
+
+            if action == "created":
                 created += 1
 
-            elif result["action"] == "updated":
+            elif action == "updated":
                 updated += 1
 
+            else:
+                logger.warning(
+                    "Unknown MongoDB action: %s",
+                    action,
+                )
 
+            # ---------------------------------------------
+            # Response data
+            # ---------------------------------------------
+
+            company = (
+                person.get("company")
+                or {}
+            )
 
             saved.append(
-    {
-        "apollo_id": apollo_id,
-        "name": person.get("name"),
-        "first_name": person.get("first_name"),
-        "last_name": person.get("last_name"),
-        "title": person.get("job_title"),
-        "email": person.get("email"),
-        "email_status": person.get("email_status"),
-        "linkedin_url": person.get("linkedin_url"),
-        "phone": person.get("phone"),
-        "company": (
-            person.get("company") or {}
-        ).get("name"),
-        "company_website": (
-            person.get("company") or {}
-        ).get("website"),
-        "company_linkedin_url": (
-            person.get("company") or {}
-        ).get("linkedin_url"),
-        "location": person.get("location"),
-        "seniority": person.get("seniority"),
-        "action": result["action"],
-        "prospect_id": result["id"],
-    }
-)    
+                {
+                    "apollo_id": apollo_id,
 
-                
+                    "name": person.get(
+                        "name"
+                    ),
 
+                    "first_name": person.get(
+                        "first_name"
+                    ),
 
+                    "last_name": person.get(
+                        "last_name"
+                    ),
+
+                    "title": person.get(
+                        "job_title"
+                    ),
+
+                    "email": person.get(
+                        "email"
+                    ),
+
+                    "email_status": person.get(
+                        "email_status"
+                    ),
+
+                    "linkedin_url": person.get(
+                        "linkedin_url"
+                    ),
+
+                    "phone": person.get(
+                        "phone"
+                    ),
+
+                    "company": company.get(
+                        "name"
+                    ),
+
+                    "company_website": company.get(
+                        "website"
+                    ),
+
+                    "company_linkedin_url": company.get(
+                        "linkedin_url"
+                    ),
+
+                    "location": person.get(
+                        "location"
+                    ),
+
+                    "seniority": person.get(
+                        "seniority"
+                    ),
+
+                    "match_confidence": person.get(
+                        "match_confidence"
+                    ),
+
+                    "action": action,
+
+                    "prospect_id": result.get(
+                        "id"
+                    ),
+                }
+            )
+
+            logger.info(
+                "Apollo prospect saved | providerId=%s | action=%s | mongo_id=%s",
+                apollo_id,
+                action,
+                result.get("id"),
+            )
 
         return {
             "created": created,
             "updated": updated,
             "skipped": skipped,
             "saved": saved,
-        }
-
-    async def enrich_and_save_people(
-        self,
-        person_ids: list[str],
-        reveal_personal_emails: bool = False,
-        reveal_phone_number: bool = False,
-    ) -> dict:
-
-        # Step 1: Enrich people from Apollo
-        enriched_result = await self.enrich_people(
-            person_ids=person_ids,
-            reveal_personal_emails=reveal_personal_emails,
-            reveal_phone_number=reveal_phone_number,
-        )
-
-        # Step 2: Save enriched data into MongoDB
-        save_result = await self.save_enriched_people(
-            enriched_result
-        )
-
-        # Step 3: Return combined result
-        return {
-            "provider": "apollo",
-            "total_requested": enriched_result.get(
-                "total_requested",
-                0,
-            ),
-            "unique_enriched": enriched_result.get(
-                "unique_enriched",
-                0,
-            ),
-            "missing_records": enriched_result.get(
-                "missing_records",
-                0,
-            ),
-            "created": save_result.get(
-                "created",
-                0,
-            ),
-            "updated": save_result.get(
-                "updated",
-                0,
-            ),
-            "skipped": save_result.get(
-                "skipped",
-                0,
-            ),
-            "saved": save_result.get(
-                "saved",
-                [],
-            ),
         }
