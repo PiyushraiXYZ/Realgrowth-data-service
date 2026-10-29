@@ -1,6 +1,10 @@
+import logging
+
 from app.providers.google_maps.client import GoogleMapsClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import google_maps_to_prospect
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleMapsService:
@@ -55,11 +59,17 @@ class GoogleMapsService:
         saved = []
 
         for place in places:
+
             prospect = google_maps_to_prospect(place)
 
             if not prospect:
                 skipped += 1
                 continue
+
+            logger.info(
+                "Saving Google Maps prospect: %s",
+                prospect.get("name"),
+            )
 
             result = await self.repository.upsert_prospect(
                 prospect
@@ -69,17 +79,18 @@ class GoogleMapsService:
 
             if action == "created":
                 created += 1
+
             elif action == "updated":
                 updated += 1
+
             else:
                 skipped += 1
 
             saved.append({
-                "provider_id": prospect.get("providerId"),
                 "name": prospect.get("name"),
-                "company": prospect.get("company"),
+                "provider_id": prospect.get("providerId"),
                 "action": action,
-                "prospect_id": result.get("prospect_id"),
+                "prospect_id": result.get("id"),  # IMPORTANT
             })
 
         return {

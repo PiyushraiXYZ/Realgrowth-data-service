@@ -274,80 +274,62 @@ def clay_to_prospect(person: dict) -> dict | None:
 # for the Google Maps
 
 def google_maps_to_prospect(place: dict) -> dict | None:
-    """
-    Convert a Google Maps / Google Places result
-    into the common RealGrowth prospect structure.
-    """
 
     if not place:
         return None
 
     display_name = place.get("displayName") or {}
 
-    if isinstance(display_name, dict):
-        name = display_name.get("text") or ""
-    else:
-        name = str(display_name)
+    name = display_name.get("text") or ""
 
     if not name:
         return None
 
     location = place.get("location") or {}
 
-    formatted_address = place.get("formattedAddress") or ""
-
-    website = place.get("websiteUri") or ""
-
-
-    industry = (
-        place.get("primaryType")
-        or ""
-    )
-
-    provider_id = place.get("id")
-
-    if not provider_id:
-        return None
-
-    phone = (
-        place.get("internationalPhoneNumber")
-        or place.get("nationalPhoneNumber")
-    )
-
-    google_maps_url = place.get("googleMapsUri") or ""
-
-    rating = place.get("rating")
-
-    user_rating_count = place.get(
-        "userRatingCount"
-    )
-
     prospect = build_base_prospect(
         name=name,
         title="",
-        location=formatted_address,
+        location=place.get("formattedAddress") or "",
         company=name,
-        website=website,
-        industry=industry,
+        website=place.get("websiteUri") or "",
+        industry=place.get("primaryType") or "",
         source="GOOGLE_MAPS",
         source_engine="GOOGLE_MAPS",
-        search_url=google_maps_url,
+        search_url=place.get("googleMapsUri") or "",
     )
 
     prospect["provider"] = "google_maps"
-    prospect["providerId"] = str(provider_id)
+    prospect["providerId"] = place.get("id")
 
-    prospect["phone"] = phone
-
-    prospect["googleMapsUrl"] = google_maps_url
-    prospect["googleMapsRating"] = rating
-    prospect["googleMapsUserRatingCount"] = user_rating_count
-
-    prospect["googlePlaceTypes"] = (
-        place.get("types") or []
+    prospect["googleMapsUrl"] = place.get(
+        "googleMapsUri"
     )
 
-    prospect["latitude"] = location.get("latitude")
-    prospect["longitude"] = location.get("longitude")
+    prospect["googleMapsRating"] = place.get(
+        "rating"
+    )
 
-    return prospect    
+    prospect["googleMapsUserRatingCount"] = place.get(
+        "userRatingCount"
+    )
+
+    prospect["googlePlaceTypes"] = place.get(
+        "types",
+        []
+    )
+
+    prospect["phone"] = (
+        place.get("nationalPhoneNumber")
+        or place.get("internationalPhoneNumber")
+    )
+
+    prospect["latitude"] = location.get(
+        "latitude"
+    )
+
+    prospect["longitude"] = location.get(
+        "longitude"
+    )
+
+    return prospect
