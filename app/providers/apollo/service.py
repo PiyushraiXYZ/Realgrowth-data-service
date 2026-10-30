@@ -3,7 +3,6 @@ import logging
 from app.providers.apollo.client import ApolloClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import apollo_to_prospect
-from app.services.prospect_scoring import ProspectScoringService
 
 
 logger = logging.getLogger(__name__)
@@ -14,7 +13,6 @@ class ApolloService:
     def __init__(self):
         self.client = ApolloClient()
         self.repository = ProspectRepository()
-        self.scoring = ProspectScoringService()
 
     async def search_people(self, payload: dict) -> dict:
         response = await self.client.search_people(payload)
@@ -67,32 +65,18 @@ class ApolloService:
 
         logger.info(
             "Apollo enrichment response | requested=%s | enriched=%s | missing=%s",
-            response.get(
-                "total_requested_enrichments",
-                0,
-            ),
-            response.get(
-                "unique_enriched_records",
-                0,
-            ),
-            response.get(
-                "missing_records",
-                0,
-            ),
+            response.get("total_requested_enrichments", 0),
+            response.get("unique_enriched_records", 0),
+            response.get("missing_records", 0),
         )
 
         # -----------------------------------------------------
         # 2. Normalize Apollo response
         # -----------------------------------------------------
 
-        enriched_result = self.normalize_enriched_people(
-            response
-        )
+        enriched_result = self.normalize_enriched_people(response)
 
-        prospects = enriched_result.get(
-            "prospects",
-            [],
-        )
+        prospects = enriched_result.get("prospects", [])
 
         logger.info(
             "Apollo normalization completed | valid_prospects=%s",
@@ -120,37 +104,30 @@ class ApolloService:
 
         return {
             "provider": "apollo",
-
             "total_requested": enriched_result.get(
                 "total_requested",
                 0,
             ),
-
             "unique_enriched": enriched_result.get(
                 "unique_enriched",
                 0,
             ),
-
             "missing_records": enriched_result.get(
                 "missing_records",
                 0,
             ),
-
             "created": save_result.get(
                 "created",
                 0,
             ),
-
             "updated": save_result.get(
                 "updated",
                 0,
             ),
-
             "skipped": save_result.get(
                 "skipped",
                 0,
             ),
-
             "saved": save_result.get(
                 "saved",
                 [],
@@ -376,7 +353,6 @@ class ApolloService:
             # ---------------------------------------------
 
             if not apollo_id:
-
                 skipped += 1
 
                 logger.warning(
@@ -402,6 +378,7 @@ class ApolloService:
 
             # ---------------------------------------------
             # Save / update MongoDB
+            # Repository also publishes RabbitMQ scoring job
             # ---------------------------------------------
 
             result = await self.repository.upsert_prospect(
@@ -502,13 +479,14 @@ class ApolloService:
             )
 
             logger.info(
-                "Apollo prospect saved | providerId=%s | action=%s | mongo_id=%s",
-                apollo_id,
+                "Apollo prospect saved | action=%s | prospect_id=%s",
                 action,
                 result.get("id"),
             )
 
-        await self.scoring.score_saved_prospects("apollo", saved)
+        # IMPORTANT:
+        # Do NOT call ProspectScoringService here.
+        # RabbitMQ scoring is triggered by ProspectRepository.
 
         return {
             "created": created,

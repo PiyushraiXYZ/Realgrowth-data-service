@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     nestjs_base_url: str = "http://localhost:3000"
     prospect_processing_api_key: str
 
+    #RabitMQ
+    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbitmq_scoring_queue: str = "prospect-scoring" 
+
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

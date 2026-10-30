@@ -3,7 +3,7 @@ import logging
 from app.providers.google_maps.client import GoogleMapsClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import google_maps_to_prospect
-from app.services.prospect_scoring import ProspectScoringService
+
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,6 @@ class GoogleMapsService:
     def __init__(self):
         self.client = GoogleMapsClient()
         self.repository = ProspectRepository()
-        self.scoring = ProspectScoringService()
 
     async def search_companies(
         self,
@@ -28,18 +27,28 @@ class GoogleMapsService:
         search_parts = []
 
         if company:
-            search_parts.append(company.strip())
+            search_parts.append(
+                company.strip()
+            )
 
         if industry:
-            search_parts.append(industry.strip())
+            search_parts.append(
+                industry.strip()
+            )
 
         if city:
-            search_parts.append(city.strip())
+            search_parts.append(
+                city.strip()
+            )
 
         if country:
-            search_parts.append(country.strip())
+            search_parts.append(
+                country.strip()
+            )
 
-        search_query = " ".join(search_parts)
+        search_query = " ".join(
+            search_parts
+        )
 
         if not search_query:
             raise ValueError(
@@ -51,33 +60,54 @@ class GoogleMapsService:
             "pageSize": per_page,
         }
 
-        response = await self.client.search_places(payload)
+        # -----------------------------------------------------
+        # 1. Search Google Maps
+        # -----------------------------------------------------
 
-        places = response.get("places", [])
+        response = await self.client.search_places(
+            payload
+        )
+
+        places = response.get(
+            "places",
+            []
+        )
 
         created = 0
         updated = 0
         skipped = 0
         saved = []
 
+        # -----------------------------------------------------
+        # 2. Normalize and save prospects
+        # -----------------------------------------------------
+
         for place in places:
 
-            prospect = google_maps_to_prospect(place)
+            prospect = google_maps_to_prospect(
+                place
+            )
 
             if not prospect:
                 skipped += 1
                 continue
 
             logger.info(
-                "Saving Google Maps prospect: %s",
+                "Saving Google Maps prospect | name=%s",
                 prospect.get("name"),
             )
+
+            # Repository handles:
+            # 1. MongoDB insert/update
+            # 2. RabbitMQ scoring job publishing
 
             result = await self.repository.upsert_prospect(
                 prospect
             )
 
-            action = result.get("action")
+            action = result.get(
+                "action"
+            )
 
             if action == "created":
                 created += 1
@@ -88,20 +118,57 @@ class GoogleMapsService:
             else:
                 skipped += 1
 
-            saved.append({
-                "name": prospect.get("name"),
-                "title": prospect.get("title"),
-                "company": prospect.get("company"),
-                "website": prospect.get("website"),
-                "industry": prospect.get("industry"),
-                "location": prospect.get("location"),
-                "phone": prospect.get("phone"),
-                "provider_id": prospect.get("providerId"),
-                "action": action,
-                "prospect_id": result.get("id"),
-            })
+            saved.append(
+                {
+                    "name": prospect.get(
+                        "name"
+                    ),
 
-        await self.scoring.score_saved_prospects("google_maps", saved)
+                    "title": prospect.get(
+                        "title"
+                    ),
+
+                    "company": prospect.get(
+                        "company"
+                    ),
+
+                    "website": prospect.get(
+                        "website"
+                    ),
+
+                    "industry": prospect.get(
+                        "industry"
+                    ),
+
+                    "location": prospect.get(
+                        "location"
+                    ),
+
+                    "phone": prospect.get(
+                        "phone"
+                    ),
+
+                    "provider_id": prospect.get(
+                        "providerId"
+                    ),
+
+                    "action": action,
+
+                    "prospect_id": result.get(
+                        "id"
+                    ),
+                }
+            )
+
+            logger.info(
+                "Google Maps prospect saved | action=%s | prospect_id=%s",
+                action,
+                result.get("id"),
+            )
+
+        # IMPORTANT:
+        # Do NOT call ProspectScoringService here.
+        # RabbitMQ scoring is triggered by ProspectRepository.
 
         return {
             "provider": "google_maps",

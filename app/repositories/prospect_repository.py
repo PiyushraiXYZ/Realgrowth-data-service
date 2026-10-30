@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from app.config.settings import settings
 from app.database.mongodb import get_database
+from app.queue.rabbitmq import rabbitmq_producer
+
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +212,6 @@ class ProspectRepository:
             updates = {}
 
             # Fields that should never be overwritten
-            # during an update.
             protected_fields = {
                 "_id",
                 "createdAt",
@@ -235,6 +236,10 @@ class ProspectRepository:
 
             updates["updatedAt"] = now
 
+            # -------------------------------------------------
+            # UPDATE MONGODB
+            # -------------------------------------------------
+
             await self.collection.update_one(
                 {
                     "_id": existing_id,
@@ -250,6 +255,21 @@ class ProspectRepository:
                 provider_id,
             )
 
+            # -------------------------------------------------
+            # PUBLISH SCORING JOB
+            # -------------------------------------------------
+
+            await rabbitmq_producer.publish_scoring_job(
+                prospect_id=str(existing_id),
+                provider=provider,
+            )
+
+            logger.info(
+                "Scoring job queued | prospect_id=%s | provider=%s",
+                str(existing_id),
+                provider,
+            )
+
             return {
                 "action": "updated",
                 "id": str(existing_id),
@@ -262,8 +282,16 @@ class ProspectRepository:
         prospect["createdAt"] = now
         prospect["updatedAt"] = now
 
+        # -----------------------------------------------------
+        # INSERT INTO MONGODB
+        # -----------------------------------------------------
+
         result = await self.collection.insert_one(
             prospect
+        )
+
+        prospect_id = str(
+            result.inserted_id
         )
 
         logger.info(
@@ -272,9 +300,24 @@ class ProspectRepository:
             provider_id,
         )
 
+        # -----------------------------------------------------
+        # PUBLISH SCORING JOB
+        # -----------------------------------------------------
+
+        await rabbitmq_producer.publish_scoring_job(
+            prospect_id=prospect_id,
+            provider=provider,
+        )
+
+        logger.info(
+            "Scoring job queued | prospect_id=%s | provider=%s",
+            prospect_id,
+            provider,
+        )
+
         return {
             "action": "created",
-            "id": str(result.inserted_id),
+            "id": prospect_id,
         }
 
     # ---------------------------------------------------------

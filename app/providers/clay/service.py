@@ -1,14 +1,18 @@
+import logging
+
 from app.providers.clay.client import ClayClient
 from app.repositories.prospect_repository import ProspectRepository
 from app.services.prospect_mapper import clay_to_prospect
-from app.services.prospect_scoring import ProspectScoringService
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClayService:
+
     def __init__(self):
         self.client = ClayClient()
         self.repository = ProspectRepository()
-        self.scoring = ProspectScoringService()
 
     async def get_search_fields(self) -> dict:
         """
@@ -65,6 +69,9 @@ class ClayService:
         """
         Search people using Clay and save the results
         into the RealGrowth prospects collection.
+
+        ProspectRepository also publishes the scoring job
+        to RabbitMQ after a successful MongoDB save.
         """
 
         filters = dict(filters or {})
@@ -99,7 +106,10 @@ class ClayService:
             "filters": filters,
         }
 
+        # -----------------------------------------------------
         # Step 1: Create Clay search
+        # -----------------------------------------------------
+
         search_response = await self.client.create_people_search(
             search_payload
         )
@@ -115,7 +125,10 @@ class ClayService:
                 f"{search_response}"
             )
 
+        # -----------------------------------------------------
         # Step 2: Run Clay search
+        # -----------------------------------------------------
+
         run_payload = {
             "page": page,
             "per_page": per_page,
@@ -126,7 +139,10 @@ class ClayService:
             payload=run_payload,
         )
 
+        # -----------------------------------------------------
         # Step 3: Extract people
+        # -----------------------------------------------------
+
         people = response.get(
             "people",
             response.get(
@@ -141,7 +157,10 @@ class ClayService:
         if people is None:
             people = []
 
+        # -----------------------------------------------------
         # Step 4: Total
+        # -----------------------------------------------------
+
         total = response.get(
             "total",
             response.get(
@@ -153,7 +172,10 @@ class ClayService:
             ),
         )
 
+        # -----------------------------------------------------
         # Step 5: Save Clay people into MongoDB
+        # -----------------------------------------------------
+
         created = 0
         updated = 0
         skipped = 0
@@ -162,7 +184,9 @@ class ClayService:
         for person in people:
 
             try:
-                prospect = clay_to_prospect(person)
+                prospect = clay_to_prospect(
+                    person
+                )
 
                 if not prospect:
                     skipped += 1
@@ -172,56 +196,102 @@ class ClayService:
                     prospect
                 )
 
-                action = result.get("action")
+                action = result.get(
+                    "action"
+                )
 
                 if action == "created":
                     created += 1
+
                 elif action == "updated":
                     updated += 1
+
                 else:
                     skipped += 1
 
-                saved.append({
-                    "provider_id": prospect.get("providerId"),
-                    "name": prospect.get("name"),
-                    "title": prospect.get("title"),
-                    "company": prospect.get("company"),
-                    "website": prospect.get("website"),
-                    "industry": prospect.get("industry"),
-                    "location": prospect.get("location"),
-                    "action": action,
-                    "prospect_id": result.get("id"),
-                })
+                saved.append(
+                    {
+                        "provider_id": prospect.get(
+                            "providerId"
+                        ),
+
+                        "name": prospect.get(
+                            "name"
+                        ),
+
+                        "title": prospect.get(
+                            "title"
+                        ),
+
+                        "company": prospect.get(
+                            "company"
+                        ),
+
+                        "website": prospect.get(
+                            "website"
+                        ),
+
+                        "industry": prospect.get(
+                            "industry"
+                        ),
+
+                        "location": prospect.get(
+                            "location"
+                        ),
+
+                        "action": action,
+
+                        "prospect_id": result.get(
+                            "id"
+                        ),
+                    }
+                )
+
+                logger.info(
+                    "Clay prospect saved | action=%s | prospect_id=%s",
+                    action,
+                    result.get("id"),
+                )
 
             except Exception as exc:
                 skipped += 1
 
-                saved.append({
-                    "provider_id": person.get("id"),
-                    "name": person.get("name"),
-                    "action": "skipped",
-                    "error": str(exc),
-                })
+                logger.exception(
+                    "Failed to save Clay prospect | provider_id=%s",
+                    person.get("id"),
+                )
 
-        await self.scoring.score_saved_prospects("clay", saved)
+                saved.append(
+                    {
+                        "provider_id": person.get(
+                            "id"
+                        ),
+
+                        "name": person.get(
+                            "name"
+                        ),
+
+                        "action": "skipped",
+
+                        "error": str(exc),
+                    }
+                )
+
+        # IMPORTANT:
+        # Do NOT call ProspectScoringService here.
+        # RabbitMQ scoring is triggered by ProspectRepository.
 
         return {
             "provider": "clay",
             "search_id": search_id,
             "total": total,
-
             "created": created,
             "updated": updated,
-            "skipped": skipped,
-
             "saved": saved,
-
             "people": people,
-
             "pagination": {
                 "page": page,
                 "per_page": per_page,
             },
-
             "filters": filters,
         }
