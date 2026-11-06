@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     mongodb_database: str
     mongodb_prospect_collection: str = "prospects"
 
+    mongodb_connection_collection: str = "prospect_connections"
+
     # NestJS
     nestjs_base_url: str = "http://localhost:3000"
     prospect_processing_api_key: str
