@@ -1,3 +1,4 @@
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,32 +10,46 @@ from app.database.mongodb import (
     close_mongodb_connection,
 )
 from app.queue.rabbitmq import rabbitmq_producer
+
 from app.routes.apollo import router as apollo_router
 from app.routes.clay import router as clay_router
 from app.routes.google_maps import router as google_maps_router
 
+from app.connection_tracking.router import router as connection_router
+from app.connection_tracking.repository import ConnectionRepository
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
     print(">>> 1. LIFESPAN STARTED", flush=True)
 
+    # Connect to MongoDB
     await connect_to_mongodb()
-
     print(">>> 2. MONGODB CONNECTED", flush=True)
-    print(">>> 3. CONNECTING TO RABBITMQ", flush=True)
+
+    # Initialize Connection Tracking indexes
+    connection_repository = ConnectionRepository()
+    await connection_repository.create_indexes()
+    print(">>> 3. CONNECTION TRACKING INDEXES CREATED", flush=True)
+
+    # Connect to RabbitMQ
+    print(">>> 4. CONNECTING TO RABBITMQ", flush=True)
     await rabbitmq_producer.connect()
-    print(">>> 4. RABBITMQ CONNECTED", flush=True)
+    print(">>> 5. RABBITMQ CONNECTED", flush=True)
+
     yield
-    print(">>> 5. SHUTTING DOWN", flush=True)
+
+    print(">>> 6. SHUTTING DOWN", flush=True)
 
     # Close RabbitMQ
     await rabbitmq_producer.close()
-    print(">>> 6. RABBITMQ CLOSED", flush=True)
+    print(">>> 7. RABBITMQ CLOSED", flush=True)
 
     # Close MongoDB
     await close_mongodb_connection()
+    print(">>> 8. MONGODB CLOSED", flush=True)
 
-    print(">>> 7. MONGODB CLOSED", flush=True)
 
 app = FastAPI(
     title=settings.app_name,
@@ -42,6 +57,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -54,6 +71,7 @@ app.add_middleware(
 )
 
 
+# Health Check
 @app.get("/health")
 async def health():
     return {
@@ -61,6 +79,11 @@ async def health():
         "service": settings.app_name,
     }
 
+
+# Existing Provider Routes
 app.include_router(apollo_router)
 app.include_router(clay_router)
 app.include_router(google_maps_router)
+
+# Prospect Connection Tracking Routes
+app.include_router(connection_router)
