@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     rabbitmq_scoring_queue: str = "prospect-scoring" 
 
+    #Cloudnary Configuration 
+    cloudinary_cloud_name: str = ""
+    cloudinary_api_key: str = ""
+    cloudinary_api_secret: str = ""
+    cloudinary_folder: str = "realgrowth/conversations"
+    mongodb_conversation_collection: str = "prospect_conversations"
+
+
+    huggingface_api_token: str
+    huggingface_ocr_model: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    huggingface_provider: str = "featherless-ai"
+
+    groq_api_key: str
+    groq_ocr_model: str = "qwen/qwen3.8-27b"
+
 
     model_config = SettingsConfigDict(
         env_file=".env",
