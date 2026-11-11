@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     groq_api_key: str
     groq_ocr_model: str = "qwen/qwen3.8-27b"
+    groq_llm_model: str = "openai/gpt-oss-120b"
 
 
     model_config = SettingsConfigDict(

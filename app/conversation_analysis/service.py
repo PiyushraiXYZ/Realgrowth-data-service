@@ -4,10 +4,23 @@ from datetime import datetime, timezone
 
 from fastapi import UploadFile
 
-from app.storage.cloudinary_service import cloudinary_storage
+from app.conversation_analysis.llm_service import (
+    conversation_llm_service,
+)
+from app.conversation_analysis.ocr.tesseract_engine import (
+    tesseract_ocr_engine,
+)
+from app.conversation_analysis.ocr.layout_analyzer import (
+    layout_analyzer,
+)
+from app.conversation_analysis.conversation_reconstructor import (
+    conversation_reconstructor,
+)
 from app.conversation_analysis.repository import ConversationRepository
 from app.conversation_analysis.models import build_conversation_document
 from app.conversation_analysis.image_processor import groq_ocr_service
+from app.storage.cloudinary_service import cloudinary_storage
+
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +30,59 @@ class ConversationService:
     def __init__(self):
         self.repository = ConversationRepository()
 
+    @staticmethod
+    def _build_api_response(conversation: dict) -> dict:
+        """
+        Build a clean API response without exposing internal
+        OCR, layout, screenshot, or Cloudinary metadata.
+        """
+
+        reconstructed = (
+            conversation.get("reconstructed_conversation") or {}
+        )
+
+        messages = reconstructed.get("messages", [])
+
+        extracted_text = []
+
+        for index, message in enumerate(messages, start=1):
+            extracted_text.append({
+                "sequence": message.get("sequence", index),
+                "sender": message.get("sender"),
+                "timestamp": message.get("timestamp"),
+                "date": message.get("date"),
+                "text": message.get("text", ""),
+            })
+
+        return {
+            "conversation_id": conversation["conversation_id"],
+            "status": conversation.get("status", "UNKNOWN"),
+            "analysis_status": conversation.get(
+                "analysis_status",
+                "PENDING",
+            ),
+            "extracted_text": extracted_text,
+            "analysis_result": conversation.get("analysis"),
+        }
+
     async def upload_screenshots(
         self,
         prospect_id: str,
         files: list[UploadFile],
     ) -> dict:
-        """Upload screenshots, save conversation and automatically run OCR."""
+        """
+        Upload screenshots, create a conversation, and process
+        OCR, reconstruction, and LLM analysis.
+        """
+
+        if not prospect_id or not prospect_id.strip():
+            raise ValueError("Prospect ID is required.")
 
         if not files:
             raise ValueError("Please upload at least one screenshot.")
 
         if len(files) > 10:
-            raise ValueError("Maximum 10 screenshots allowed per upload.")
+            raise ValueError("Maximum 10 screenshots allowed.")
 
         allowed_types = {
             "image/jpeg",
@@ -46,7 +100,7 @@ class ConversationService:
         database_saved = False
 
         try:
-            # 1. Upload images to Cloudinary.
+            # STEP 1: Upload screenshots to Cloudinary.
             for file in files:
                 image_data = await cloudinary_storage.upload_image(
                     file=file
@@ -57,24 +111,27 @@ class ConversationService:
                     "filename": file.filename,
                 })
 
-            # 2. Build conversation document.
+            # STEP 2: Create initial MongoDB document.
             document = build_conversation_document(
                 prospect_id=prospect_id,
                 screenshots=uploaded_images,
             )
 
             document["status"] = "OCR_PENDING"
-            document["analysis_status"] = "PENDING"
 
-            # 3. Save in MongoDB.
             conversation = await self.repository.create_conversation(
                 document
             )
-            database_saved = True
 
+            database_saved = True
             conversation_id = conversation["conversation_id"]
 
-            # 4. Automatically execute OCR.
+            logger.info(
+                "Conversation created successfully: %s",
+                conversation_id,
+            )
+
+            # STEP 3: Start OCR, reconstruction, and LLM analysis.
             try:
                 return await self.process_conversation_ocr(
                     conversation_id=conversation_id
@@ -82,7 +139,7 @@ class ConversationService:
 
             except Exception:
                 logger.exception(
-                    "Automatic OCR failed for conversation %s",
+                    "OCR/reconstruction failed for conversation %s",
                     conversation_id,
                 )
 
@@ -91,27 +148,42 @@ class ConversationService:
                     status="OCR_FAILED",
                 )
 
-                return await self.repository.get_conversation(
-                    conversation_id
+                failed_conversation = (
+                    await self.repository.get_conversation(
+                        conversation_id
+                    )
                 )
+
+                if failed_conversation:
+                    return self._build_api_response(
+                        failed_conversation
+                    )
+
+                raise
 
         except Exception:
             logger.exception(
-                "Failed to upload screenshots for prospect %s",
+                "Screenshot upload failed for prospect %s",
                 prospect_id,
             )
 
-            # Only delete Cloudinary images if DB save failed.
+            # Clean up Cloudinary files only when the MongoDB
+            # conversation document was not successfully created.
             if not database_saved:
                 for image in uploaded_images:
+                    public_id = image.get("public_id")
+
+                    if not public_id:
+                        continue
+
                     try:
                         await cloudinary_storage.delete_image(
-                            image["public_id"]
+                            public_id
                         )
                     except Exception:
                         logger.exception(
-                            "Cloudinary cleanup failed: %s",
-                            image["public_id"],
+                            "Cloudinary cleanup failed for %s",
+                            public_id,
                         )
 
             raise
@@ -120,7 +192,9 @@ class ConversationService:
         self,
         conversation_id: str,
     ) -> dict:
-        """Retrieve conversation details from MongoDB."""
+        """
+        Get one conversation using the clean API response format.
+        """
 
         conversation = await self.repository.get_conversation(
             conversation_id
@@ -129,7 +203,7 @@ class ConversationService:
         if not conversation:
             raise ValueError("Conversation not found.")
 
-        return conversation
+        return self._build_api_response(conversation)
 
     async def get_all_conversations(
         self,
@@ -137,7 +211,9 @@ class ConversationService:
         skip: int = 0,
         limit: int = 20,
     ) -> list[dict]:
-        """Retrieve conversations with optional prospect filtering."""
+        """
+        Get conversation metadata with pagination.
+        """
 
         if skip < 0:
             raise ValueError("Skip cannot be negative.")
@@ -155,7 +231,14 @@ class ConversationService:
         self,
         conversation_id: str,
     ) -> dict:
-        """Extract text from all screenshots and save OCR results."""
+        """
+        Process screenshots through:
+        1. Tesseract OCR
+        2. Layout analysis
+        3. Groq OCR fallback when Tesseract quality is low
+        4. Conversation reconstruction
+        5. Groq LLM conversation analysis
+        """
 
         conversation = await self.repository.get_conversation(
             conversation_id
@@ -167,11 +250,13 @@ class ConversationService:
         screenshots = conversation.get("screenshots", [])
 
         if not screenshots:
-            raise ValueError("No screenshots found in this conversation.")
+            raise ValueError("No screenshots found.")
 
         extracted_messages = []
 
+        # STEP 1: OCR and layout analysis.
         for index, screenshot in enumerate(screenshots, start=1):
+
             image_url = screenshot.get("image_url")
 
             if not image_url:
@@ -179,32 +264,172 @@ class ConversationService:
                     f"Screenshot {index} does not contain an image URL."
                 )
 
-            extracted_text = await groq_ocr_service.extract_text(
+            ocr_result = await tesseract_ocr_engine.extract(
                 image_url=image_url
             )
+
+            layout_result = layout_analyzer.analyze(
+                ocr_result=ocr_result,
+                screenshot_index=index,
+            )
+
+            fallback_used = False
+            fallback_error = None
+
+            low_quality = (
+                ocr_result.get("word_count", 0) == 0
+                or ocr_result.get("average_confidence", 0) < 55
+            )
+
+            # STEP 2: Groq OCR fallback if Tesseract quality is low.
+            if low_quality and groq_ocr_service.client:
+                try:
+                    groq_text = await groq_ocr_service.extract_text(
+                        image_url=image_url
+                    )
+
+                    if groq_text:
+                        ocr_result["tesseract_text"] = (
+                            ocr_result.get("text", "")
+                        )
+
+                        ocr_result["text"] = groq_text
+                        ocr_result["engine"] = "groq_fallback"
+
+                        fallback_used = True
+
+                except Exception as exc:
+                    fallback_error = str(exc)
+
+                    logger.warning(
+                        "Groq OCR fallback failed for screenshot %s "
+                        "in conversation %s",
+                        index,
+                        conversation_id,
+                        exc_info=True,
+                    )
 
             extracted_messages.append({
                 "screenshot_index": index,
                 "filename": screenshot.get("filename"),
                 "public_id": screenshot.get("public_id"),
-                "extracted_text": extracted_text,
+                "extracted_text": ocr_result.get("text", ""),
+                "ocr": ocr_result,
+                "layout": layout_result,
+                "fallback_used": fallback_used,
+                "fallback_error": fallback_error,
                 "extracted_at": datetime.now(timezone.utc),
             })
 
-        updated_conversation = await self.repository.update_ocr_results(
-            conversation_id=conversation_id,
-            extracted_messages=extracted_messages,
+        # STEP 3: Reconstruct the conversation.
+        reconstructed_conversation = (
+            conversation_reconstructor.reconstruct(
+                extracted_messages
+            )
+        )
+
+        # STEP 4: Save OCR and reconstruction results in MongoDB.
+        updated_conversation = (
+            await self.repository.update_ocr_results(
+                conversation_id=conversation_id,
+                extracted_messages=extracted_messages,
+                reconstructed_conversation=reconstructed_conversation,
+            )
         )
 
         if not updated_conversation:
-            raise ValueError("Failed to save OCR results.")
+            raise ValueError(
+                "Failed to save OCR and reconstruction results."
+            )
 
         logger.info(
-            "OCR completed successfully for conversation %s",
+            "Conversation reconstruction completed: %s",
             conversation_id,
         )
 
-        return updated_conversation
+        # STEP 5: Run Groq LLM analysis.
+        await self.process_conversation_analysis(
+            conversation_id=conversation_id,
+            reconstructed_conversation=reconstructed_conversation,
+        )
+
+        # STEP 6: Fetch the latest document because LLM analysis
+        # may have updated the status and analysis result.
+        final_conversation = await self.repository.get_conversation(
+            conversation_id
+        )
+
+        if not final_conversation:
+            raise ValueError(
+                "Conversation not found after processing."
+            )
+
+        return self._build_api_response(final_conversation)
+
+    async def process_conversation_analysis(
+        self,
+        conversation_id: str,
+        reconstructed_conversation: dict,
+    ) -> dict | None:
+        """
+        Send reconstructed conversation to Groq LLM,
+        save the analysis result, and update its status.
+
+        LLM failure does not invalidate successful OCR
+        or conversation reconstruction.
+        """
+
+        await self.repository.update_analysis_status(
+            conversation_id=conversation_id,
+            status="PROCESSING",
+        )
+
+        try:
+            logger.info(
+                "Starting Groq LLM analysis for conversation %s",
+                conversation_id,
+            )
+
+            analysis_result = (
+                await conversation_llm_service.analyze_conversation(
+                    conversation=reconstructed_conversation
+                )
+            )
+
+            if not isinstance(analysis_result, dict):
+                raise ValueError(
+                    "Groq LLM returned an invalid analysis result."
+                )
+
+            saved = await self.repository.update_analysis_result(
+                conversation_id=conversation_id,
+                analysis_result=analysis_result,
+            )
+
+            if not saved:
+                raise ValueError(
+                    "Failed to save LLM analysis result."
+                )
+
+            logger.info(
+                "Groq LLM analysis completed successfully: %s",
+                conversation_id,
+            )
+
+            return analysis_result
+
+        except Exception:
+            logger.exception(
+                "Groq LLM analysis failed for conversation %s",
+                conversation_id,
+            )
+
+            await self.repository.update_analysis_status(
+                conversation_id=conversation_id,
+                status="FAILED",
+            )
+
+            return None
 
 
 conversation_service = ConversationService()
