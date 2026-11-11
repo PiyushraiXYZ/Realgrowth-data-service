@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     groq_ocr_model: str = "qwen/qwen3.8-27b"
     groq_llm_model: str = "openai/gpt-oss-120b"
 
+    celery_broker_url: str = "redis://localhost:6380/0"
+    celery_result_backend: str = "redis://localhost:6380/1"
+
 
     model_config = SettingsConfigDict(
         env_file=".env",

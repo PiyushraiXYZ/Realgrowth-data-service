@@ -10,7 +10,10 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import WithJsonSchema
-
+from app.conversation_analysis.schemas import (
+    ConversationResponse,
+    ConversationUploadResponse,
+)
 from app.conversation_analysis.service import conversation_service
 from app.conversation_analysis.schemas import ConversationResponse
 
@@ -32,7 +35,8 @@ ImageUpload = Annotated[
 
 @router.post(
     "/upload",
-    response_model=ConversationResponse,
+    response_model=ConversationUploadResponse,
+    status_code=202,
 )
 async def upload_conversation_screenshots(
     prospect_id: Annotated[str, Form(...)],
