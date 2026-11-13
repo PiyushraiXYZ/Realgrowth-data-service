@@ -76,7 +76,7 @@ When startup succeeds, open:
 Conversation analysis is queued in Celery. Start a worker in a second terminal from the repository root, using the same virtual environment and `.env` configuration:
 
 ```bash
-celery -A app.celery_app:celery_app worker --loglevel=info
+celery -A app.celery_app:celery_app worker --loglevel=info --pool=solo
 ```
 
 On Windows, Celery's default prefork pool may not work reliably. Use the solo pool for local development:
